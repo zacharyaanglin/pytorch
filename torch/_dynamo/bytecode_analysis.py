@@ -157,7 +157,10 @@ def stacksize_analysis(instructions):
     worklist = deque()
     worklist.append(0)
 
+    count = 0
     while len(worklist) != 0:
+        count += 1
+        assert count < 10000, "Number of iterations has exceeded the limit"
         index = worklist.popleft()
         inst = instructions[index]
         stack_size = stack_sizes[inst]
