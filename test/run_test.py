@@ -1275,7 +1275,7 @@ def run_test_module(test: str, test_directory: str, options) -> Tuple[Optional[s
         return_code, bool
     ), f"While running {test} got non integer return code {return_code}"
     if return_code == 0:
-        return None, test, time.time() - start_time()
+        return None, test, time.time() - start_time
 
     message = f"{test} failed!"
     if return_code < 0:
@@ -1283,7 +1283,7 @@ def run_test_module(test: str, test_directory: str, options) -> Tuple[Optional[s
         # return code -N, where N is the signal number.
         signal_name = SIGNALS_TO_NAMES_DICT[-return_code]
         message += f" Received signal: {signal_name}"
-    return message, test, time.time() - start_time()
+    return message, test, time.time() - start_time
 
 
 def main():
