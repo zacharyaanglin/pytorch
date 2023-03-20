@@ -1371,7 +1371,7 @@ def main():
     finally:
         pool.terminate()
         pool.join()
-
+        print("total times total times total times")
         print(json.dumps(all_times, indent=2))
 
         if options.coverage:
