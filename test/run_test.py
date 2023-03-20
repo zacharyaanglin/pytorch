@@ -14,7 +14,8 @@ import sys
 import tempfile
 import json
 import glob
-from typing import Dict, Optional, List, cast, Any
+import time
+from typing import Dict, Optional, List, Tuple, cast, Any
 
 import torch
 from torch.utils import cpp_extension
@@ -1260,7 +1261,8 @@ def get_selected_tests(options):
     return selected_tests
 
 
-def run_test_module(test: str, test_directory: str, options) -> Optional[str]:
+def run_test_module(test: str, test_directory: str, options) -> Tuple[Optional[str], str, float]:
+    start_time = time.time()
     maybe_set_hip_visible_devies()
 
     test_module = parse_test_module(test)
@@ -1273,7 +1275,7 @@ def run_test_module(test: str, test_directory: str, options) -> Optional[str]:
         return_code, bool
     ), f"While running {test} got non integer return code {return_code}"
     if return_code == 0:
-        return None
+        return None, test, time.time() - start_time()
 
     message = f"{test} failed!"
     if return_code < 0:
@@ -1281,7 +1283,7 @@ def run_test_module(test: str, test_directory: str, options) -> Optional[str]:
         # return code -N, where N is the signal number.
         signal_name = SIGNALS_TO_NAMES_DICT[-return_code]
         message += f" Received signal: {signal_name}"
-    return message
+    return message, test, time.time() - start_time()
 
 
 def main():
@@ -1322,8 +1324,11 @@ def main():
     pool = get_context("spawn").Pool(NUM_PROCS, maxtasksperchild=None if torch.version.hip else 1)
     os.makedirs(REPO_ROOT / "test" / "test-reports", exist_ok=True)
 
-    def success_callback(err_message):
+    all_times = {}
+
+    def success_callback(err_message, test, total_time):
         if err_message is None:
+            all_times[test] = total_time
             return True
         failure_messages.append(err_message)
         print_to_stderr(err_message)
@@ -1355,8 +1360,9 @@ def main():
             options_clone = copy.deepcopy(options)
             if can_run_in_pytest(test):
                 options_clone.pytest = True
-            err_message = run_test_module(test, test_directory, options_clone)
+            err_message, test, total_time = run_test_module(test, test_directory, options_clone)
             if err_message is None:
+                all_times[test] = total_time
                 continue
             failure_messages.append(err_message)
             if not options_clone.continue_through_error:
@@ -1365,6 +1371,8 @@ def main():
     finally:
         pool.terminate()
         pool.join()
+
+        print(json.dumps(all_times, indent=2))
 
         if options.coverage:
             from coverage import Coverage
