@@ -1326,7 +1326,8 @@ def main():
 
     all_times = {}
 
-    def success_callback(err_message, test, total_time):
+    def success_callback(res):
+        err_message, test, total_time = res
         if err_message is None:
             all_times[test] = total_time
             return True
