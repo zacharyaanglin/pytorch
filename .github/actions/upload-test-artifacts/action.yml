@@ -34,7 +34,7 @@ runs:
       run: |
         # Remove any previous test reports if they exist
         rm -f test-reports-*.zip
-        zip -r "test-reports-${FILE_SUFFIX}.zip" test -i '*.xml' -i '*.csv'
+        zip -r "test-reports-${FILE_SUFFIX}.zip" test -i '*.xml' -i '*.csv' -i 'wall_clock_time.json'
 
     - name: Zip usage log for upload
       if: runner.os != 'Windows' && !inputs.use-gha
