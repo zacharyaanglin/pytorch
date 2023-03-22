@@ -1373,7 +1373,7 @@ def main():
         pool.terminate()
         pool.join()
         print("total times total times total times")
-        wall_clock_time_file_path = (test_directory / "test-reports") / "wall_clock_time.json"
+        wall_clock_time_file_path = pathlib.Path(test_directory) / "test-reports" / "wall_clock_time.json"
         os.makedirs(wall_clock_time_file_path)
 
         with open(wall_clock_time_file_path, "x") as f:
