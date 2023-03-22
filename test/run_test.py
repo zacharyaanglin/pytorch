@@ -1375,7 +1375,7 @@ def main():
         print("total times total times total times")
         wall_clock_time_file_path = pathlib.Path(test_directory) / "test-reports" / "wall_clock_time.json"
 
-        with open(wall_clock_time_file_path, "x") as f:
+        with open(wall_clock_time_file_path, "w") as f:
             f.write(json.dumps(wall_clock_time, indent=2))
         print(json.dumps(wall_clock_time, indent=2))
 
