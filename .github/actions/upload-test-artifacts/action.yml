@@ -139,6 +139,7 @@ runs:
         path: |
           test/**/*.xml
           test/**/*.csv
+          test/test-reports/wall_clock_time.json
 
     - name: Store Usage Logs on Github
       uses: actions/upload-artifact@v3

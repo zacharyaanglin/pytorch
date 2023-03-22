@@ -1324,12 +1324,12 @@ def main():
     pool = get_context("spawn").Pool(NUM_PROCS, maxtasksperchild=None if torch.version.hip else 1)
     os.makedirs(REPO_ROOT / "test" / "test-reports", exist_ok=True)
 
-    all_times = {}
+    wall_clock_time = []
 
     def success_callback(res):
         err_message, test, total_time = res
         if err_message is None:
-            all_times[test] = total_time
+            wall_clock_time.append({"invoking_file": test, "wall_clock_time": total_time})
             return True
         failure_messages.append(err_message)
         print_to_stderr(err_message)
@@ -1363,7 +1363,7 @@ def main():
                 options_clone.pytest = True
             err_message, test, total_time = run_test_module(test, test_directory, options_clone)
             if err_message is None:
-                all_times[test] = total_time
+                wall_clock_time.append({"invoking_file": test, "wall_clock_time": total_time})
                 continue
             failure_messages.append(err_message)
             if not options_clone.continue_through_error:
@@ -1373,7 +1373,12 @@ def main():
         pool.terminate()
         pool.join()
         print("total times total times total times")
-        print(json.dumps(all_times, indent=2))
+        wall_clock_time_file_path = (test_directory / "test-reports") / "wall_clock_time.json"
+        os.makedirs(wall_clock_time_file_path)
+
+        with open(wall_clock_time_file_path, "x") as f:
+            f.write(json.dumps(wall_clock_time, indent=2))
+        print(json.dumps(wall_clock_time, indent=2))
 
         if options.coverage:
             from coverage import Coverage
