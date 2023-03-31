@@ -10,6 +10,7 @@ import contextlib
 import re
 import os
 import random
+import signal
 
 from collections import defaultdict
 from importlib import import_module
