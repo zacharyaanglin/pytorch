@@ -231,7 +231,7 @@ class StepcurrentPlugin:
         failed_index = None
         for index, item in enumerate(items):
             if item.nodeid == self.lastrun:
-                failed_index = index
+                failed_index = index + 1
                 break
 
         # If the previously failed test was not found among the test items,

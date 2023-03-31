@@ -607,7 +607,7 @@ def retry_shell(command, cwd=None, env=None, stdout=None, stderr=None, timeout=N
     assert retries >= 0, f"Expecting non negative number for number of retries, got {retries}"
     try:
         exit_code = shell(command, cwd=cwd, env=env, stdout=stdout, stderr=stderr, timeout=timeout)
-        if exit_code == 0 or retries == 0:
+        if exit_code == 0 or retries == 0 or exit_code == 5:
             return exit_code
         print(f"Got exit code {exit_code}, retrying (retries left={retries})", file=stdout, flush=True)
     except subprocess.TimeoutExpired:
@@ -814,6 +814,8 @@ def run_tests(argv=UNITTEST_ARGS):
         if not RERUN_DISABLED_TESTS:
             # exitcode of 5 means no tests were found, which happens since some test configs don't
             # run tests from certain files
+            if "-x" in pytest_args:
+                exit(exit_code)
             exit(0 if exit_code == 5 else exit_code)
         else:
             # Only record the test report and always return a success code when running under rerun
