@@ -34,7 +34,7 @@ def make_test_case(name, device="cpu"):
             func = getattr(tests, test_name)
             assert callable(func), "not a callable"
             code = test_torchinductor.run_and_get_cpp_code(func)
-            self.assertEqual("load_inline" in code, True)
+            self.assertEqual("CppWrapperCodeCache" in code, True)
         finally:
             tests.tearDown()
             tests.tearDownClass()
