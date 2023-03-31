@@ -477,7 +477,11 @@ def run_test(
             stderr=f,
             env=env,
             timeout=timeout,
-            retries=1 if should_file_rerun else float('inf') if options.continue_through_error else 0,
+            retries=1
+            if should_file_rerun
+            else float("inf")
+            if options.continue_through_error
+            else 0,
         )
 
     print_log_file(test_module, log_path, failed=(ret_code != 0))
