@@ -178,11 +178,11 @@ if [[ "$BUILD_ENVIRONMENT" == *asan* ]]; then
 fi
 
 if [[ "$BUILD_ENVIRONMENT" == *-debug* ]]; then
-    echo "We are in debug mode. Expect the python assertion to fail and return 1"
+    echo "We are in debug mode: $BUILD_ENVIRONMENT. Expect the python assertion to fail and return 1"
     (cd test && ! get_exit_code python -c "import torch; torch._C._crash_if_debug_asserts_fail(1)")
 else
     # Noop when debug is disabled
-    echo "We are not in debug mode. Expect the assertion to pass and return 0"
+    echo "We are not in debug mode: $BUILD_ENVIRONMENT. Expect the assertion to pass and return 0"
     (cd test && python -c "import torch; torch._C._crash_if_debug_asserts_fail(1)")
 fi
 
