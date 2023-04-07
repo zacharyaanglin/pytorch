@@ -24,7 +24,13 @@ STEPCURRENT_CACHE_DIR = "cache/stepcurrent"
 def pytest_addoption(parser: Parser) -> None:
     group = parser.getgroup("general")
     group.addoption(
-        "--ss",
+        "--scs",
+        action="store_true",
+        default=False,
+        dest="stepcurrent_skip",
+    )
+    group.addoption(
+        "--sc",
         action="store_true",
         default=False,
         dest="stepcurrent",
@@ -90,7 +96,7 @@ def pytest_configure(config: Config) -> None:
             config.getini("junit_log_passing_tests_reruns"),
         )
         config.pluginmanager.register(config.stash[xml_key])
-    if config.getoption("stepcurrent"):
+    if config.getoption("stepcurrent") or config.getoption("stepcurrent_skip"):
         config.pluginmanager.register(StepcurrentPlugin(config), "stepcurrentplugin")
 
 
@@ -221,6 +227,7 @@ class StepcurrentPlugin:
         assert config.cache is not None
         self.cache: pytest.Cache = config.cache
         self.lastrun: Optional[str] = self.cache.get(STEPCURRENT_CACHE_DIR, None)
+        self.skip: bool = config.getoption("stepcurrent_skip")
 
     def pytest_collection_modifyitems(self, config: Config, items: List[Any]) -> None:
         if not self.lastrun:
@@ -231,7 +238,9 @@ class StepcurrentPlugin:
         failed_index = None
         for index, item in enumerate(items):
             if item.nodeid == self.lastrun:
-                failed_index = index + 1
+                failed_index = index
+                if self.skip:
+                    failed_index += 1
                 break
 
         # If the previously failed test was not found among the test items,
