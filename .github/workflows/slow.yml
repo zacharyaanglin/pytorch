@@ -71,8 +71,7 @@ jobs:
       docker-image-name: pytorch-linux-bionic-py3.8-clang9
       test-matrix: |
         { include: [
-          { config: "slow", shard: 1, num_shards: 2, runner: "linux.2xlarge" },
-          { config: "slow", shard: 2, num_shards: 2, runner: "linux.2xlarge" },
+          { config: "slow", shard: 1, num_shards: 1, runner: "linux.2xlarge" },
         ]}
 
   linux-bionic-py3_8-clang9-test:
@@ -92,7 +91,8 @@ jobs:
       docker-image-name: pytorch-linux-focal-py3-clang7-asan
       test-matrix: |
         { include: [
-          { config: "slow", shard: 1, num_shards: 1, runner: "linux.4xlarge" },
+          { config: "slow", shard: 1, num_shards: 2, runner: "linux.4xlarge" },
+          { config: "slow", shard: 2, num_shards: 2, runner: "linux.4xlarge" },
         ]}
       sync-tag: asan-build
 
