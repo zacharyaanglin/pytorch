@@ -22,6 +22,7 @@ import platform
 import random
 import re
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -581,6 +582,15 @@ def wait_for_process(p, timeout=None):
         else:
             p.kill()
             raise
+    except subprocess.TimeoutExpired:
+        # send SIGINT to give pytest a chance to make xml
+        p.send_signal(signal.SIGINT)
+        exit_status = p.wait(timeout=5)
+        if exit_status is not None:
+            return exit_status
+        else:
+            p.kill()
+            raise
     except:  # noqa: B001,E722, copied from python core library
         p.kill()
         raise
@@ -607,7 +617,7 @@ def retry_shell(command, cwd=None, env=None, stdout=None, stderr=None, timeout=N
     assert retries >= 0, f"Expecting non negative number for number of retries, got {retries}"
     try:
         exit_code = shell(command, cwd=cwd, env=env, stdout=stdout, stderr=stderr, timeout=timeout)
-        if exit_code == 0 or retries == 0 or exit_code == 5:
+        if exit_code == 0 or retries == 0:
             return exit_code
         print(f"Got exit code {exit_code}, retrying (retries left={retries})", file=stdout, flush=True)
     except subprocess.TimeoutExpired:
