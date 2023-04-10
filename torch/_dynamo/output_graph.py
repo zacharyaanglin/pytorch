@@ -585,6 +585,12 @@ class OutputGraph(fx.Tracer, Checkpointable[OutputGraphState]):
                     output.append(create_instruction("POP_TOP"))
             self.add_output_instructions(output + pass2.get_instructions())
 
+        from .variables.tensor import NumpyTensorVariable
+
+        if stack_values and isinstance(stack_values[-1], NumpyTensorVariable):
+            self.add_output_instructions(
+                stack_values[-1].reconstruct_ndarray(stack_values, tx)
+            )
         # restore all the live local vars
         self.add_output_instructions(
             [PyCodegen(tx).create_store(var) for var in reversed(restore_vars)]
