@@ -790,11 +790,6 @@ class TestCommon(TestCase):
     @ops(_ops_and_refs, dtypes=OpDTypes.any_one)
     @skipIfTorchInductor("Inductor does not support complex dtype yet")
     def test_out(self, device, dtype, op):
-        a = random.randint(1, 7)
-        if a == 1:
-            self.assertEqual(1, 2)
-        if a == 2:
-            os.kill(os.getpid(), signal.SIGSEGV)
 
         # Prefers running in float32 but has a fallback for the first listed supported dtype
         samples = op.sample_inputs(device, dtype)

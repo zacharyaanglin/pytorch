@@ -124,6 +124,9 @@ class _TestMultiProcessing:
             mp.start_processes(_test_exception_all_func, nprocs=2, start_method=self.start_method)
 
     def test_terminate_signal(self):
+        import signal
+        import os
+        os.kill(os.getpid(), signal.SIGSEGV)
         # SIGABRT is aliased with SIGIOT
         message = "process 0 terminated with signal (SIGABRT|SIGIOT)"
 
@@ -139,6 +142,7 @@ class _TestMultiProcessing:
             mp.start_processes(_test_terminate_signal_func, nprocs=2, start_method=self.start_method)
 
     def test_terminate_exit(self):
+        self.assertEqual(1, 2)
         exitcode = 123
         with self.assertRaisesRegex(
             Exception,
@@ -147,6 +151,7 @@ class _TestMultiProcessing:
             mp.start_processes(_test_terminate_exit_func, args=(exitcode,), nprocs=2, start_method=self.start_method)
 
     def test_success_first_then_exception(self):
+        self.assertEqual(1, 2)
         exitcode = 123
         with self.assertRaisesRegex(
             Exception,
@@ -222,6 +227,10 @@ class ForkTest(TestCase, _TestMultiProcessing):
 
 class ErrorTest(TestCase):
     def test_errors_pickleable(self):
+        import signal
+        import os
+        os.kill(os.getpid(), signal.SIGSEGV)
+
         for error in (
             mp.ProcessRaisedException("Oh no!", 1, 1),
             mp.ProcessExitedException("Oh no!", 1, 1, 1),
