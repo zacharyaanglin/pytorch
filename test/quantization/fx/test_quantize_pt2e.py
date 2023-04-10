@@ -7,6 +7,7 @@ from torch.testing._internal.common_quantization import (
     QuantizationTestCase,
     skip_if_no_torchvision,
     skipIfNoQNNPACK,
+    skipIfNoONEDNN,
     skipIfNoX86,
 )
 from torch.testing._internal.common_quantization import NodeSpec as ns
@@ -411,6 +412,7 @@ class TestQuantizePT2E(QuantizationTestCase):
 @skipIfNoQNNPACK
 class TestQuantizePT2EX86Inductor(QuantizationTestCase):
     @skipIfNoX86
+    @skipIfNoONEDNN
     @xfailIfPython311
     def test_inductor_backend_config_conv(self):
         class M(torch.nn.Module):
