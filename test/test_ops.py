@@ -9,8 +9,6 @@ import torch
 import contextlib
 import re
 import os
-import random
-import signal
 
 from collections import defaultdict
 from importlib import import_module
@@ -790,7 +788,6 @@ class TestCommon(TestCase):
     @ops(_ops_and_refs, dtypes=OpDTypes.any_one)
     @skipIfTorchInductor("Inductor does not support complex dtype yet")
     def test_out(self, device, dtype, op):
-
         # Prefers running in float32 but has a fallback for the first listed supported dtype
         samples = op.sample_inputs(device, dtype)
         for sample in samples:
