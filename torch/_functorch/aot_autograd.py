@@ -20,6 +20,7 @@ import torch.utils.dlpack
 from torch import Tensor
 from torch._dispatch.python import enable_python_dispatcher
 from torch._dynamo.utils import dynamo_timed, lazy_format_graph_code
+from torch._guards import detect_fake_mode
 from torch._logging import getArtifactLogger
 from torch._subclasses import CrossRefFakeMode, FakeTensor, FakeTensorMode
 from torch.fx import immutable_collections, Interpreter
@@ -27,7 +28,7 @@ from torch.fx.experimental.proxy_tensor import is_sym_node, py_sym_types
 from torch.fx.experimental.symbolic_shapes import ShapeEnv
 from torch.multiprocessing.reductions import StorageWeakRef
 from torch.nn.utils import stateless
-from torch._decomp.decompositions_for_rng import PhiloxStateTracker, rng_decompositions, RNGStateHelper, PhiloxTotalOffsets
+from torch._decomp.decompositions_for_rng import PhiloxStateTracker, rng_decompositions, CUDARngStateHelper, PhiloxTotalOffsets
 from . import config
 from .partitioners import default_partition
 from torch._guards import TracingContext, DuplicateInputs, Source
@@ -1173,7 +1174,6 @@ def create_functionalized_graph(
         # returned by AOTAutograd (both autograd.Function for training and
         # simple wrapper for inference)
         aot_config.philox_total_offsets = PhiloxStateTracker.get_accumulated_offsets()
-        PhiloxStateTracker.mark_end_of_tracing()
 
 
     return fx_g
@@ -1318,8 +1318,8 @@ def aot_dispatch_base(flat_fn, flat_args: List[Tensor], aot_config: AOTConfig, *
         compiler = aot_config.inference_compiler if aot_config.inference_compiler is not None else aot_config.fw_compiler
         if config.functionalize_rng_ops:
             # Add the seed and offset as example inputs to pass to the compiler
-            fake_mode = get_live_fake_mode_from_dispatch()
-            seed, offset = RNGStateHelper.get_torch_state_as_tuple(fake_mode)
+            fake_mode = detect_fake_mode()
+            seed, offset = CUDARngStateHelper.get_torch_state_as_tuple(fake_mode)
             flat_args = (seed, offset, *flat_args)
         compiled_fw = compiler(fw_module, flat_args)
 
@@ -1334,10 +1334,10 @@ def aot_dispatch_base(flat_fn, flat_args: List[Tensor], aot_config: AOTConfig, *
     def wrapper(*args):
         if config.functionalize_rng_ops:
             # Add the seed and offset to args
-            seed, offset = RNGStateHelper.get_torch_state_as_tuple()
+            seed, offset = CUDARngStateHelper.get_torch_state_as_tuple()
             out = compiled_fn(seed, offset, *args)
             # Advance the rng state offset
-            RNGStateHelper.advance_torch_state(aot_config.philox_total_offsets.total_fwd_offset)
+            CUDARngStateHelper.advance_torch_state(aot_config.philox_total_offsets.total_fwd_offset)
             return out
         else:
             return compiled_fn(*args)
@@ -2300,19 +2300,12 @@ def create_runtime_wrapper(
             return fw_outs
     return runtime_wrapper
 
-def get_live_fake_mode_from_dispatch():
-    modes = torch.utils._python_dispatch._get_current_dispatch_mode_stack()
-    fake_tensor_modes = [m for m in modes if isinstance(m, FakeTensorMode)]
-    if not fake_tensor_modes:
-        return None
-    return fake_tensor_modes[-1]
-
 def create_functionalized_rng_ops_wrapper(func, args, trace_joint=True):
     # Functionalization of rng ops changes the calling convention of the joint graph.
     # It goes from (primals, tangents) to (seed, offset, primals, tangents)
     # At runtime, we pass on the current seed and offset. This is hidden from
     # the user.
-    fake_mode = get_live_fake_mode_from_dispatch()
+    fake_mode = detect_fake_mode()
 
     def override_get_rng_state(device: Union[int, str, torch.device] = 'cuda'):
         out = PhiloxStateTracker.get_state_as_tensor()
@@ -2331,16 +2324,17 @@ def create_functionalized_rng_ops_wrapper(func, args, trace_joint=True):
             with patch("torch.cuda.set_rng_state", override_set_rng_state):
                 return func(*primals)
 
+    PhiloxStateTracker.reset()
     if trace_joint:
         # Get the current seed and offset to setup tracing.
-        fwd_seed, fwd_base_offset = RNGStateHelper.get_torch_state_as_tuple(fake_mode)
-        bwd_seed, bwd_base_offset = RNGStateHelper.get_torch_state_as_tuple(fake_mode)
+        fwd_seed, fwd_base_offset = CUDARngStateHelper.get_torch_state_as_tuple(fake_mode)
+        bwd_seed, bwd_base_offset = CUDARngStateHelper.get_torch_state_as_tuple(fake_mode)
         PhiloxStateTracker.record_state(fwd_seed, fwd_base_offset, "forward")
         PhiloxStateTracker.record_state(bwd_seed, bwd_base_offset, "backward")
         return traced_joint, (fwd_seed, fwd_base_offset, bwd_seed, bwd_base_offset, *args)
     else:
         # Get the current seed and offset to setup tracing.
-        fwd_seed, fwd_base_offset = RNGStateHelper.get_torch_state_as_tuple(fake_mode)
+        fwd_seed, fwd_base_offset = CUDARngStateHelper.get_torch_state_as_tuple(fake_mode)
         PhiloxStateTracker.record_state(fwd_seed, fwd_base_offset, "forward")
         return traced_forward, (fwd_seed, fwd_base_offset, *args)
 
@@ -2416,8 +2410,8 @@ def aot_dispatch_autograd(flat_fn, flat_args: List[Any], aot_config: AOTConfig, 
         with track_graph_compiling(aot_config, "forward"):
             if config.functionalize_rng_ops:
                 # Update example inputs for the fw_compiler
-                fake_mode = get_live_fake_mode_from_dispatch()
-                seed, offset = RNGStateHelper.get_torch_state_as_tuple(fake_mode)
+                fake_mode = detect_fake_mode()
+                seed, offset = CUDARngStateHelper.get_torch_state_as_tuple(fake_mode)
                 flat_args = (seed, offset, *flat_args)
             compiled_fw_func = aot_config.fw_compiler(
                 fw_module, flat_args
@@ -2434,7 +2428,7 @@ def aot_dispatch_autograd(flat_fn, flat_args: List[Any], aot_config: AOTConfig, 
             args = deduped_flat_tensor_args
             if config.functionalize_rng_ops:
                 # Add the seed and offset to args
-                seed, offset = RNGStateHelper.get_torch_state_as_tuple()
+                seed, offset = CUDARngStateHelper.get_torch_state_as_tuple()
                 args = (seed, offset, *args)
             # There is a pretty complicated calling convention around what the compiled fw returns.
             # The full list of outputs and their relative order is:
@@ -2535,7 +2529,7 @@ def aot_dispatch_autograd(flat_fn, flat_args: List[Any], aot_config: AOTConfig, 
 
             if config.functionalize_rng_ops:
                 # Advance total fwd offset
-                RNGStateHelper.advance_torch_state(aot_config.philox_total_offsets.total_fwd_offset)
+                CUDARngStateHelper.advance_torch_state(aot_config.philox_total_offsets.total_fwd_offset)
             return tuple(raw_returns)
 
         @staticmethod
@@ -2615,7 +2609,7 @@ def aot_dispatch_autograd(flat_fn, flat_args: List[Any], aot_config: AOTConfig, 
 
             if config.functionalize_rng_ops:
                 # Add the seed and offset to args
-                seed, offset = RNGStateHelper.get_torch_state_as_tuple()
+                seed, offset = CUDARngStateHelper.get_torch_state_as_tuple()
                 all_args = [seed, offset, *all_args]
             del contiguous_args
 
@@ -2651,7 +2645,7 @@ def aot_dispatch_autograd(flat_fn, flat_args: List[Any], aot_config: AOTConfig, 
 
                 if config.functionalize_rng_ops:
                     # Advance total bwd rng offset
-                    RNGStateHelper.advance_torch_state(aot_config.philox_total_offsets.total_bwd_offset)
+                    CUDARngStateHelper.advance_torch_state(aot_config.philox_total_offsets.total_bwd_offset)
                 return tuple(out)
 
             if torch.is_grad_enabled() and any(t.requires_grad for t in all_args if isinstance(t, torch.Tensor)):

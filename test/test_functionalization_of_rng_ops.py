@@ -8,13 +8,14 @@ from torch.testing._internal.common_utils import (
 
 from torch.testing._internal.common_device_type import instantiate_device_type_tests, dtypes
 from functorch.compile import aot_function, nop, min_cut_rematerialization_partition
+from unittest import skip
 from unittest.mock import patch
 import functools
 import torch.utils.checkpoint
 
 
 def count_philox_rand(gm, args, freq):
-    assert [node.target for node in gm.graph.nodes].count(torch.ops.prims.philox_rand.default) == freq
+    assert [node.target for node in gm.graph.nodes].count(torch.ops.rngprims.philox_rand.default) == freq
     return gm
 
 class TestFunctionalizationRngOps(TestCase):
@@ -226,36 +227,32 @@ class TestFunctionalizationRngOps(TestCase):
         self.assertEqual(ref, res)
         self.assertEqual(x.grad, x_clone.grad)
 
-
     # TODO - Dropout needs more work because of offset calculation
-    # @patch.object(torch._functorch.config, "functionalize_rng_ops", True)
-    # @dtypes(torch.float32)
-    # def test_checkpoint(self, dtype, device):
-    #     def g(x, y):
-    #         return torch.nn.functional.dropout(x, 0.6)
+    @skip("Dropout needs more work because of offset calculation")
+    @patch.object(torch._functorch.config, "functionalize_rng_ops", True)
+    @dtypes(torch.float32)
+    def test_checkpoint(self, dtype, device):
+        def g(x, y):
+            return torch.nn.functional.dropout(x, 0.6)
 
-    #     def fn(x, y):
-    #         return torch.utils.checkpoint.checkpoint(g, x, y, use_reentrant=False)
+        def fn(x, y):
+            return torch.utils.checkpoint.checkpoint(g, x, y, use_reentrant=False)
 
-    #     # x = torch.rand(2, 2, device="cuda", requires_grad=True)
-    #     x = torch.ones(2, 2, device="cuda", requires_grad=True)
-    #     y = torch.rand(2, 2, device="cuda", requires_grad=True)
-    #     torch.cuda.manual_seed(123)
-    #     ref = fn(x, y)
-    #     print(ref)
-    #     print(RNGStateHelper.get_torch_state_as_tuple())
+        # x = torch.rand(2, 2, device="cuda", requires_grad=True)
+        x = torch.ones(2, 2, device="cuda", requires_grad=True)
+        y = torch.rand(2, 2, device="cuda", requires_grad=True)
+        torch.cuda.manual_seed(123)
+        ref = fn(x, y)
 
-    #     # With checkpointing we should recompute dropout in bwd, and should see philox_rand
-    #     fwd_compiler = functools.partial(count_philox_rand, freq=1)
-    #     bwd_compiler = functools.partial(count_philox_rand, freq=1)
-    #     aot_fn = aot_function(fn, fwd_compiler, bwd_compiler)
-    #     torch.cuda.manual_seed(123)
-    #     res = aot_fn(x, y)
-    #     print(res)
-    #     print(RNGStateHelper.get_torch_state_as_tuple())
-    #     # res.sum().backward()
-    #     # TODO - This is not same. Debug this further.
-    #     self.assertEqual(ref, res)
+        # With checkpointing we should recompute dropout in bwd, and should see philox_rand
+        fwd_compiler = functools.partial(count_philox_rand, freq=1)
+        bwd_compiler = functools.partial(count_philox_rand, freq=1)
+        aot_fn = aot_function(fn, fwd_compiler, bwd_compiler)
+        torch.cuda.manual_seed(123)
+        res = aot_fn(x, y)
+        # res.sum().backward()
+        # TODO - This is not same. Debug this further.
+        self.assertEqual(ref, res)
 
 
 only_for = ("cuda",)

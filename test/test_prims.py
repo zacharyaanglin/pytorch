@@ -25,7 +25,7 @@ from torch.testing._internal.common_device_type import (
 
 from torch.testing._internal.logging_tensor import LoggingTensor, capture_logs, log_input
 import torch._prims as prims
-from torch._prims.rng_prims import RNGStateHelper
+from torch._prims.rng_prims import CUDARngStateHelper
 from torch._prims.executor import make_traced
 import torch._refs as refs
 from torch.fx.experimental.proxy_tensor import make_fx
@@ -1107,18 +1107,18 @@ class TestPrims(TestCase):
             results = []
             rng_states = []
             for _ in range(repeats):
-                rng_states.append(RNGStateHelper.get_torch_state_as_tuple())
+                rng_states.append(CUDARngStateHelper.get_torch_state_as_tuple())
                 references.append(torch.rand(size, device=device, dtype=dtype))
 
             torch.cuda.manual_seed(123)
             for idx in range(repeats):
                 seed, offset = rng_states[idx]
-                result = torch.ops.prims.philox_rand((size,),
-                                                     seed=seed,
-                                                     offset=offset,
-                                                     stride=[1,],
-                                                     device=device,
-                                                     dtype=dtype)
+                result = torch.ops.rngprims.philox_rand((size,),
+                                                        seed=seed,
+                                                        offset=offset,
+                                                        stride=None,
+                                                        device=device,
+                                                        dtype=dtype)
                 results.append(result)
 
             for a, b in zip(references, results):

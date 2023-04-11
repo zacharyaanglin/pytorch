@@ -1,44 +1,25 @@
 from collections import defaultdict
+from dataclasses import dataclass
 from typing import Callable, Dict
 
 import torch
 import torch._decomp as decomp
 from torch._ops import OpOverload
 from torch._prims_common import make_contiguous_strides_for
-from torch._subclasses.fake_tensor import disable_fake_tensor_mode_tracing
-
 
 aten = torch.ops.aten
 
 rng_decompositions: Dict[str, Dict[OpOverload, Callable]] = defaultdict(dict)
 
 
-def throw_if_philox_offset_did_not_advance(fn):
-    # Raises error if one forgot to advance the offset while adding a new decomposition.
-    def inner(*args, **kwargs):
-        old_relative_offset = PhiloxStateTracker.get_current_relative_offset()
-        out = fn(*args, **kwargs)
-        new_relative_offset = PhiloxStateTracker.get_current_relative_offset()
-        if old_relative_offset == new_relative_offset:
-            raise ValueError("Philox seed offset did not advance after decomposition")
-        return out
-
-    return inner
-
-
 def register_rng_decomposition(aten_op):
-    def inner(fn):
-        return decomp.register_decomposition(aten_op, rng_decompositions)(
-            throw_if_philox_offset_did_not_advance(fn)
-        )
-
-    return inner
+    return decomp.register_decomposition(aten_op, rng_decompositions)
 
 
 def throw_on_non_cuda(device):
     raise RuntimeError(
         f"You are trying to functionalize a {device.type} RNG operator but {device.type} does not "
-        f"use Philox/counter-based PRNG. Therefore, functionalizing a {device.type} RNG operator is "
+        f"use Philox/counter-based RNG. Therefore, functionalizing a {device.type} RNG operator is "
         "not supported. We are discussing the possibility of a Philox-based RNG implementation for CPU."
     )
 
@@ -55,12 +36,12 @@ def rand_offset_calculator(shape):
     unroll = 4
     curand4_engine_calls = 4
     device_property = torch.cuda.get_device_properties(torch.cuda.current_device())
-    blocks_per_sm = int(device_property.max_threads_per_multi_processor / block_size)
-    grid_size = int((numel + block_size - 1) / block_size)
+    blocks_per_sm = device_property.max_threads_per_multi_processor // block_size
+    grid_size = (numel + block_size - 1) // block_size
     grid_size = min(grid_size, device_property.multi_processor_count * blocks_per_sm)
     offset = (
-        int((numel - 1) / (block_size * grid_size * unroll) + 1) * curand4_engine_calls
-    )
+        (numel - 1) // (block_size * grid_size * unroll) + 1
+    ) * curand4_engine_calls
     return offset
 
 
@@ -68,14 +49,12 @@ def rand_offset_calculator(shape):
 # ops like dropout which have fused implementation and can hide the rand inside.
 @register_rng_decomposition(aten.rand)
 def rand(shape, dtype=None, layout=torch.strided, device=None, pin_memory=False):
-    device = device or "cpu"
-
-    if device.type != "cuda":
+    if device and device.type != "cuda":
         throw_on_non_cuda(device)
     seed, offset = PhiloxStateTracker.get_state_as_tuple()
     dtype = dtype or torch.float32
     stride = make_contiguous_strides_for(shape)
-    r = torch.ops.prims.philox_rand(shape, seed, offset, stride, device, dtype)
+    r = torch.ops.rngprims.philox_rand(shape, seed, offset, None, device, dtype)
     PhiloxStateTracker.advance_offset(rand_offset_calculator(shape))
     return r
 
@@ -94,7 +73,7 @@ def rand_like(
         throw_on_non_cuda(device)
     dtype = dtype or x.dtype
     seed, offset = PhiloxStateTracker.get_state_as_tuple()
-    r = torch.ops.prims.philox_rand(x.shape, seed, offset, x.stride(), device, dtype)
+    r = torch.ops.rngprims.philox_rand(x.shape, seed, offset, None, device, dtype)
     PhiloxStateTracker.advance_offset(rand_offset_calculator(x.shape))
     return r
 
@@ -111,8 +90,8 @@ class PhiloxState:
         self.reset()
 
     def reset(self):
-        self.seed = torch.Tensor(())
-        self.base_offset = torch.Tensor(())
+        self.seed = torch.tensor(())
+        self.base_offset = torch.tensor(())
         self.relative_offset = 0
 
     def validate_state(self):
@@ -141,6 +120,7 @@ class PhiloxState:
         self.relative_offset = 0
 
 
+@dataclass
 class PhiloxTotalOffsets:
     """
     PhiloxStateTracker computes the total fwd and bwd offsets for an AOT
@@ -150,9 +130,8 @@ class PhiloxTotalOffsets:
     offsets to be used at runtime.
     """
 
-    def __init__(self, fwd_offset=0, bwd_offset=0):
-        self.total_fwd_offset = fwd_offset
-        self.total_bwd_offset = bwd_offset
+    total_fwd_offset: int = 0
+    total_bwd_offset: int = 0
 
 
 class PhiloxStateTracker:
@@ -161,13 +140,18 @@ class PhiloxStateTracker:
     For each aot tracing instance, AOT Autograd resets this tracker and keeps
     track of both forward and backward offsets. At runtime, we only care about
     the total consumed forward and backward offsets. There are stored as part of
-    aot_config (PhiloxTotalOffsetsForRuntime), which is a config object per
-    aot-tracing.
+    aot_config (PhiloxTotalOffsets), which is a config object per aot-tracing.
     """
 
     running_state = PhiloxState()
     fwd_state = PhiloxState()
     bwd_state = PhiloxState()
+
+    @classmethod
+    def reset(cls):
+        cls.running_state = PhiloxState()
+        cls.fwd_state = PhiloxState()
+        cls.bwd_state = PhiloxState()
 
     @classmethod
     def mark_beginning_of_forward(cls):
@@ -178,17 +162,6 @@ class PhiloxStateTracker:
     def mark_beginning_of_backward(cls):
         # Tells the tracker to use bwd_state as the running state
         cls.running_state = cls.bwd_state
-
-    @classmethod
-    def mark_end_of_tracing(cls):
-        # Reset the state so that next occurence of AOTAutograd has clean slate
-        cls.clear()
-
-    @classmethod
-    def clear(cls):
-        cls.running_state = PhiloxState()
-        cls.fwd_state = PhiloxState()
-        cls.bwd_state = PhiloxState()
 
     @classmethod
     def record_state(cls, seed, offset, mode):
@@ -241,34 +214,38 @@ class PhiloxStateTracker:
         return PhiloxTotalOffsets(fwd_offset, bwd_offset)
 
 
-class RNGStateHelper:
+class CUDARngStateHelper:
     @staticmethod
     def get_torch_state_as_tuple(fake_mode=None):
         if not torch.cuda.is_available():
-            return torch.tensor(0), torch.tensor(0)
-        # torch.cuda.get_rng_state yields a real tensor, and upsets fake
-        # tensor for the following ops.
-        with disable_fake_tensor_mode_tracing():
-            rng_state = torch.cuda.get_rng_state()
-            seed = rng_state[800:808].view(dtype=torch.int64)[0]
-            offset = rng_state[808:].view(dtype=torch.int64)[0]
+            seed = torch.tensor(0)
+            offset = torch.tensor(0)
+            if fake_mode:
+                seed = fake_mode.from_tensor(seed)
+                offset = fake_mode.from_tensor(offset)
+            return seed, offset
+
+        rng_state = torch.cuda.get_rng_state()
         if fake_mode:
-            seed = fake_mode.from_tensor(seed)
-            offset = fake_mode.from_tensor(offset)
+            rng_state = fake_mode.from_tensor(rng_state)
+        # Rng state is [64-bit seed, 64-bit offset]
+        seed = rng_state[0:8].view(dtype=torch.int64)[0]
+        offset = rng_state[8:].view(dtype=torch.int64)[0]
         return seed, offset
 
     @staticmethod
     def set_torch_state_tensor(seed, offset):
+        # Rng state is [64-bit seed, 64-bit offset]
         seed_portion = seed.reshape([1]).view(torch.uint8)
         offset_portion = offset.reshape([1]).view(torch.uint8)
-        prefix = torch.tensor([-1] * 800, dtype=torch.uint8)
-        new_state = torch.cat([prefix, seed_portion, offset_portion])
+        new_state = torch.cat([seed_portion, offset_portion])
         torch.cuda.set_rng_state(new_state)
 
     @staticmethod
     def advance_torch_state(relative_offset):
         rng_state = torch.cuda.get_rng_state()
-        seed = rng_state[800:808].view(dtype=torch.int64)[0]
-        offset = rng_state[808:].view(dtype=torch.int64)[0]
+        # Rng state is [64-bit seed, 64-bit offset]
+        seed = rng_state[0:8].view(dtype=torch.int64)[0]
+        offset = rng_state[8:].view(dtype=torch.int64)[0]
         new_offset = offset + relative_offset
-        RNGStateHelper.set_torch_state_tensor(seed, new_offset)
+        CUDARngStateHelper.set_torch_state_tensor(seed, new_offset)
