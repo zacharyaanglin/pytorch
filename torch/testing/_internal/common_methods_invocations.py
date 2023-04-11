@@ -10437,6 +10437,8 @@ op_db: List[OpInfo] = [
                        # 76047
                        DecorateInfo(unittest.expectedFailure, 'TestNNCOpInfo', 'test_nnc_correctness',
                                     dtypes=(torch.bfloat16, torch.float32, torch.float64)),
+                       DecorateInfo(unittest.skipIf(TEST_WITH_ASAN, "unexpected success on asan"),
+                                    'TestNNCOpInfo', 'test_nnc_correctness', dtypes=(torch.bfloat16)),
                    )),
     OpInfo('stft',
            decorators=[
