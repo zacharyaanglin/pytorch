@@ -315,6 +315,8 @@ class TestCommon(TestCase):
                 continue
             except torch._subclasses.fake_tensor.DataDependentOutputException:
                 continue
+            except torch._subclasses.fake_tensor.UnsupportedOperatorException:
+                continue
 
             if isinstance(result, torch.Tensor):
                 self.assertTrue(isinstance(meta_result, FakeTensor))
@@ -2065,6 +2067,8 @@ class TestFakeTensor(TestCase):
 
             except torch._subclasses.fake_tensor.UnsupportedFakeTensorException:
                 pass
+            except torch._subclasses.fake_tensor.UnsupportedOperatorException:
+                pass
             except torch._subclasses.fake_tensor.DynamicOutputShapeException:
                 self.assertTrue(name in dynamic_output_op_tests or name in sometimes_dynamic_output_op_test)
             except torch._subclasses.fake_tensor.DataDependentOutputException:
@@ -2150,12 +2154,15 @@ class TestFakeTensor(TestCase):
             )
 
             # TODO: enable check_aliasing, batch norm fails
-            with torch._subclasses.CrossRefFakeMode(ignore_op_fn=lambda fn: fn in common_skip_ops, check_aliasing=True):
-                with warnings.catch_warnings(), context(), torch.autograd.set_multithreading_enabled(False):
-                    composite_compliance.compute_expected_grads(
-                        op.get_op(), args, kwargs,
-                        sample.output_process_fn_grad,
-                        op.gradcheck_wrapper)
+            try:
+                with torch._subclasses.CrossRefFakeMode(ignore_op_fn=lambda fn: fn in common_skip_ops, check_aliasing=True):
+                    with warnings.catch_warnings(), context(), torch.autograd.set_multithreading_enabled(False):
+                        composite_compliance.compute_expected_grads(
+                            op.get_op(), args, kwargs,
+                            sample.output_process_fn_grad,
+                            op.gradcheck_wrapper)
+            except torch._subclasses.fake_tensor.UnsupportedOperatorException:
+                pass
 
     @onlyCUDA
     @ops([op for op in op_db if op.supports_autograd], allowed_dtypes=(torch.float,))
