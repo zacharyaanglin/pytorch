@@ -428,6 +428,7 @@ class GraphLowering(torch.fx.Interpreter):
                     type(None),
                     ir.ConstantBuffer,
                     sympy.Expr,
+                    sympy.core.relational.Relational,
                     int,
                 ),
             )
