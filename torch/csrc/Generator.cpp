@@ -125,8 +125,6 @@ static PyObject* THPGenerator_manualSeed(PyObject* _self, PyObject* seed) {
       "manual_seed expected a long, "
       "but got %s",
       THPUtils_typename(seed));
-  // See Note [Acquire lock when using random generators]
-  std::lock_guard<std::mutex> lock(generator.mutex());
   // NOLINTNEXTLINE(cppcoreguidelines-init-variables)
   uint64_t seed_unpacked;
   try {
@@ -144,9 +142,45 @@ static PyObject* THPGenerator_manualSeed(PyObject* _self, PyObject* seed) {
       throw;
     }
   }
+  // See Note [Acquire lock when using random generators]
+  std::lock_guard<std::mutex> lock(generator.mutex());
   generator.set_current_seed(seed_unpacked);
   Py_INCREF(self);
-  return (PyObject*)self;
+  return _self;
+  END_HANDLE_TH_ERRORS
+}
+
+static PyObject* THPGenerator_setOffset(PyObject* _self, PyObject* offset) {
+  HANDLE_TH_ERRORS
+  auto self = (THPGenerator*)_self;
+  auto generator = self->cdata;
+  THPUtils_assert(
+      THPUtils_checkLong(offset),
+      "manual_offset expected a long, "
+      "but got %s",
+      THPUtils_typename(offset));
+  // NOLINTNEXTLINE(cppcoreguidelines-init-variables)
+  uint64_t offset_unpacked;
+  try {
+    // First try to interpret as unsigned long
+    offset_unpacked = THPUtils_unpackUInt64(offset);
+  } catch (...) {
+    if (PyErr_ExceptionMatches(PyExc_OverflowError)) {
+      // If an overflow happened, then the offset could be negative,
+      // so try to interpret it as signed long
+      PyErr_Clear();
+      int64_t offset_unpacked_signed = THPUtils_unpackLong(offset);
+      offset_unpacked = *(reinterpret_cast<uint64_t*>(&offset_unpacked_signed));
+    } else {
+      // If any other type of exception happened, rethrow it
+      throw;
+    }
+  }
+  // See Note [Acquire lock when using random generators]
+  std::lock_guard<std::mutex> lock(generator.mutex());
+  generator.set_offset(offset_unpacked);
+  Py_INCREF(self);
+  return _self;
   END_HANDLE_TH_ERRORS
 }
 
@@ -182,6 +216,7 @@ static struct PyGetSetDef THPGenerator_properties[] = {
 static PyMethodDef THPGenerator_methods[] = {
     {"get_state", THPGenerator_getState, METH_NOARGS, nullptr},
     {"set_state", THPGenerator_setState, METH_O, nullptr},
+    {"set_offset", THPGenerator_setOffset, METH_O, nullptr},
     {"manual_seed", THPGenerator_manualSeed, METH_O, nullptr},
     {"seed", THPGenerator_seed, METH_NOARGS, nullptr},
     {"initial_seed", THPGenerator_initialSeed, METH_NOARGS, nullptr},
