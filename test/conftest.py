@@ -213,7 +213,7 @@ def pytest_report_teststatus(report, config):
 
 
 def pytest_sessionfinish(session: pytest.Session) -> None:
-    if not session.config.getoption("stepcurrent"):
+    if not session.config.getoption("stepcurrent") and not session.config.getoption("stepcurrent_skip"):
         assert session.config.cache is not None
         session.config.cache.set(STEPCURRENT_CACHE_DIR, [])
 
