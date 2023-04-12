@@ -1648,5 +1648,48 @@ def _sparse_coo_tensor_unsafe(*args, **kwargs):
     return torch.sparse_coo_tensor(*args, **kwargs)
 
 
+class _TritonLibrary(object):
+    lib = torch.library.Library("triton", "DEF")
+    ops_table = {}
+
+    @classmethod
+    def probablyRegisterOp(cls, op_key, full_schema, op_impl, dispatch_key):
+        if op_key not in cls.ops_table:
+            cls.lib.define(full_schema)
+            cls.lib.impl("triton::" + op_key, op_impl, dispatch_key)
+            cls.ops_table[op_key] = op_impl
+
+        return cls.ops_table[op_key]
+
+
+class _WrappedTritonKernel(object):
+    """ Just a simple wrapper to store some metadata for testing purposes.
+    """
+
+    def __init__(self, kernel):
+        self.kernel = kernel
+        self.kernel_invoked = False
+
+    def __call__(self, *args, **kwargs):
+        res = self.kernel(*args, **kwargs)
+        self.kernel_invoked = True
+        return res
+
+
+def _register_triton_kernels():
+    from torch.sparse._triton_ops import bsr_dense_mm
+
+    if bsr_dense_mm is not None:
+        _TritonLibrary.probablyRegisterOp(
+            "_triton_bsr_dense_mm_out",
+            "_triton_bsr_dense_mm_out(Tensor bsr, Tensor dense, *, Tensor(a!) out) -> Tensor(a!)",
+            _WrappedTritonKernel(lambda *args, **kwargs: bsr_dense_mm(*args, skip_checks=True, **kwargs)),
+            "SparseCsrCUDA"
+        )
+
+
+if torch.cuda.is_available():
+    torch.cuda._lazy_call(_register_triton_kernels)
+
 from . import _logging
 _logging._init_logs()
