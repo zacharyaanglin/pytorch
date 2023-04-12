@@ -827,9 +827,9 @@ class DeviceCachingAllocator {
   ska::flat_hash_map<MempoolId_t, PrivatePool*, MempoolIdHash>
       graph_pools_freeable;
 
-  // Maps a capturing stream to its assigned private pool,
-  // in case we want multiple captures to share the same pool
-  ska::flat_hash_map<CaptureId_t, MempoolId_t> capture_to_pool_map;
+  // Indicates that a current stream should be allocated to a pool
+  // rather than the global memory.
+  ska::flat_hash_map<cudaStream_t, MempoolId_t> stream_to_pool_map;
 
   // XXX - maybe we should generalize and have multiple events
   std::vector<OutOfMemoryObserver> oom_observers_;
@@ -850,7 +850,7 @@ class DeviceCachingAllocator {
       bool alloc_trace_record_context) {
     std::unique_lock<std::recursive_mutex> lock(mutex);
     record_history = enabled;
-    context_recorder_.store(context_recorder);
+    context_recorder_.store(record_history ? context_recorder : nullptr);
     alloc_trace_max_entries_ = std::max(size_t(1), alloc_trace_max_entries);
     alloc_trace_record_context_ = alloc_trace_record_context;
     alloc_trace_next = 0;
@@ -1392,7 +1392,7 @@ class DeviceCachingAllocator {
 
       // curr_block will become next pointer if it is split, so reassign with
       // the returned value
-      Block* curr_block = alloc_found_block(
+      curr_block = alloc_found_block(
           std::move(params), block_state.size, context, split);
 
       TORCH_CHECK(curr_block->ptr == block_state.ptr);
@@ -1660,7 +1660,7 @@ class DeviceCachingAllocator {
   // See Note [Interaction with CUDA graph capture]
 
   // Called by CUDAGraph::capture_begin
-  void notifyCaptureBegin(CaptureId_t graph_id, MempoolId_t mempool_id) {
+  void beginAllocateStreamToPool(cudaStream_t stream, MempoolId_t mempool_id) {
     std::lock_guard<std::recursive_mutex> lock(mutex);
     captures_underway++;
     auto it = graph_pools.find(mempool_id);
@@ -1675,24 +1675,25 @@ class DeviceCachingAllocator {
       TORCH_INTERNAL_ASSERT(it->second->use_count > 0);
       it->second->use_count++;
     }
-    // Maps this graph_id to mempool_id and makes sure this graph_id wasn't
+
+    // Maps this stream to mempool_id and makes sure this graph_id wasn't
     // somehow assigned a mempool_id already. Keeps essential effect (insert)
     // out of macro.
-    bool inserted = capture_to_pool_map.insert({graph_id, mempool_id}).second;
+    bool inserted = stream_to_pool_map.insert({stream, mempool_id}).second;
     TORCH_INTERNAL_ASSERT(inserted);
   }
 
   // Called by CUDAGraph::capture_end
-  void notifyCaptureAboutToEnd(CaptureId_t graph_id) {
+  void endAllocateStreamToPool(cudaStream_t stream) {
     std::lock_guard<std::recursive_mutex> lock(mutex);
     captures_underway--;
-    auto it = capture_to_pool_map.find(graph_id);
-    TORCH_INTERNAL_ASSERT(it != capture_to_pool_map.end());
-    capture_to_pool_map.erase(it);
+    auto it = stream_to_pool_map.find(stream);
+    TORCH_INTERNAL_ASSERT(it != stream_to_pool_map.end());
+    stream_to_pool_map.erase(it);
   }
 
   // Called by CUDAGraph::reset
-  void notifyCaptureDestroy(MempoolId_t mempool_id) {
+  void releasePool(MempoolId_t mempool_id) {
     std::lock_guard<std::recursive_mutex> lock(mutex);
     // The instantiated cudaGraphExec_t has been destroyed. We can't blindly
     // delete and cudaFree the mempool its capture used, because
@@ -1877,16 +1878,8 @@ class DeviceCachingAllocator {
     // capture, so it's usually 0, and we can short-circuit
     // cudaStreamCaptureStatus (which does a TLS lookup).
     if (C10_UNLIKELY(captures_underway)) {
-      CaptureId_t id;
-      cudaStreamCaptureStatus status;
-      C10_CUDA_CHECK(cudaStreamGetCaptureInfo(stream, &status, &id));
-      if (status != cudaStreamCaptureStatus::cudaStreamCaptureStatusNone) {
-        TORCH_INTERNAL_ASSERT(
-            status !=
-            cudaStreamCaptureStatus::cudaStreamCaptureStatusInvalidated);
-        // Retrieves the private pool assigned to this capture.
-        auto it0 = capture_to_pool_map.find(id);
-        TORCH_INTERNAL_ASSERT(it0 != capture_to_pool_map.end());
+      auto it0 = stream_to_pool_map.find(stream);
+      if (it0 != stream_to_pool_map.end()) {
         auto it1 = graph_pools.find(it0->second);
         TORCH_INTERNAL_ASSERT(it1 != graph_pools.end());
         if (size <= kSmallSize) {
@@ -2232,12 +2225,12 @@ class DeviceCachingAllocator {
 
   void insert_events(Block* block) {
     int prev_device;
-    C10_CUDA_CHECK(cudaGetDevice(&prev_device));
+    C10_CUDA_CHECK(c10::cuda::GetDevice(&prev_device));
 
     stream_set streams(std::move(block->stream_uses));
     AT_ASSERT(block->stream_uses.empty());
     for (auto& stream : streams) {
-      C10_CUDA_CHECK(cudaSetDevice(stream.device_index()));
+      C10_CUDA_CHECK(c10::cuda::SetDevice(stream.device_index()));
 
       EventPool::Event event =
           create_event_internal(static_cast<int>(stream.device_index()));
@@ -2247,7 +2240,7 @@ class DeviceCachingAllocator {
       cuda_events[stream].emplace_back(std::move(event), block);
     }
 
-    C10_CUDA_CHECK(cudaSetDevice(prev_device));
+    C10_CUDA_CHECK(c10::cuda::MaybeSetDevice(prev_device));
   }
 
   void insert_events_deferred_until_no_capture() {
@@ -2441,11 +2434,7 @@ class NativeCachingAllocator : public CUDAAllocator {
         "invalid fraction:",
         fraction,
         ". Please set within (0, 1).");
-    int activated_device;
-    C10_CUDA_CHECK(cudaGetDevice(&activated_device));
-    if (activated_device != device) {
-      C10_CUDA_CHECK(cudaSetDevice(device));
-    }
+    C10_CUDA_CHECK(c10::cuda::SetDevice(device));
     device_allocator[device]->setMemoryFraction(fraction);
   }
 
@@ -2455,7 +2444,7 @@ class NativeCachingAllocator : public CUDAAllocator {
       size_t alloc_trace_max_entries,
       bool alloc_trace_record_context) override {
     int device;
-    C10_CUDA_CHECK(cudaGetDevice(&device));
+    C10_CUDA_CHECK(c10::cuda::GetDevice(&device));
     device_allocator[device]->recordHistory(
         enabled,
         std::move(context_recorder),
@@ -2465,7 +2454,7 @@ class NativeCachingAllocator : public CUDAAllocator {
 
   void attachOutOfMemoryObserver(OutOfMemoryObserver observer) override {
     int device;
-    C10_CUDA_CHECK(cudaGetDevice(&device));
+    C10_CUDA_CHECK(c10::cuda::GetDevice(&device));
     device_allocator[device]->attachOutOfMemoryObserver(std::move(observer));
   }
 
@@ -2564,7 +2553,7 @@ class NativeCachingAllocator : public CUDAAllocator {
         size < one_exa_bytes,
         "CUDA out of memory. Tried to allocate more than 1EB memory.");
     int device;
-    C10_CUDA_CHECK(cudaGetDevice(&device));
+    C10_CUDA_CHECK(c10::cuda::GetDevice(&device));
     void* r = nullptr;
     if (forceUncachedAllocator()) {
       // Deliberately don't use cudaMallocMaybeCapturing here, to force an error
@@ -2617,25 +2606,23 @@ class NativeCachingAllocator : public CUDAAllocator {
     device_allocator[device]->resetPeakStats();
   }
   // CUDAGraph interactions
-  void notifyCaptureBegin(
+  void beginAllocateStreamToPool(
       int device,
-      CaptureId_t graph_id,
+      cudaStream_t stream,
       MempoolId_t mempool_id) override {
     assertValidDevice(device);
-    device_allocator[device]->notifyCaptureBegin(
-        graph_id, std::move(mempool_id));
+    device_allocator[device]->beginAllocateStreamToPool(
+        stream, std::move(mempool_id));
   }
 
-  void notifyCaptureAboutToEnd(int device, CaptureId_t graph_id) override {
+  void endAllocateStreamToPool(int device, cudaStream_t stream) override {
     assertValidDevice(device);
-    device_allocator[device]->notifyCaptureAboutToEnd(graph_id);
+    device_allocator[device]->endAllocateStreamToPool(stream);
   }
 
-  void notifyCaptureEnded(int device, CaptureId_t graph_id) override {} // no-op
-
-  void notifyCaptureDestroy(int device, MempoolId_t mempool_id) override {
+  void releasePool(int device, MempoolId_t mempool_id) override {
     assertValidDevice(device);
-    device_allocator[device]->notifyCaptureDestroy(std::move(mempool_id));
+    device_allocator[device]->releasePool(std::move(mempool_id));
   }
 
   void* raw_alloc(size_t nbytes) override {
@@ -2643,7 +2630,7 @@ class NativeCachingAllocator : public CUDAAllocator {
       return nullptr;
     }
     int device;
-    C10_CUDA_CHECK(cudaGetDevice(&device));
+    C10_CUDA_CHECK(c10::cuda::GetDevice(&device));
     void* r = nullptr;
     malloc(&r, device, nbytes, cuda::getCurrentCUDAStream(device));
     return r;
@@ -2654,14 +2641,34 @@ class NativeCachingAllocator : public CUDAAllocator {
       return nullptr;
     }
     int device;
-    C10_CUDA_CHECK(cudaGetDevice(&device));
+    C10_CUDA_CHECK(c10::cuda::GetDevice(&device));
     void* r = nullptr;
     malloc(&r, device, nbytes, stream);
     return r;
   }
-  bool needsPoolSpecificPeerAccess() override {
-    return false;
+
+  void enablePeerAccess(int dev, int dev_to_access) override {
+    c10::cuda::CUDAGuard device_guard(dev);
+    cudaError_t err = cudaDeviceEnablePeerAccess(dev_to_access, 0);
+    if (err == cudaErrorPeerAccessAlreadyEnabled) {
+      // ignore and clear the error if access was already enabled
+      cudaGetLastError();
+    } else {
+      C10_CUDA_CHECK(err);
+    }
   }
+
+  cudaError_t memcpyAsync(
+      void* dst,
+      int dstDevice,
+      const void* src,
+      int srcDevice,
+      size_t count,
+      cudaStream_t stream,
+      bool p2p_enabled) override {
+    return cudaMemcpyAsync(dst, src, count, cudaMemcpyDeviceToDevice, stream);
+  }
+
   void raw_delete(void* ptr) override {
     this->free(ptr);
   }
@@ -2701,7 +2708,7 @@ class NativeCachingAllocator : public CUDAAllocator {
         &dev, *ipc_handle, cudaIpcMemLazyEnablePeerAccess));
     // devPtr has to be deleted in same device when created.
     int curr_device;
-    C10_CUDA_CHECK(cudaGetDevice(&curr_device));
+    C10_CUDA_CHECK(c10::cuda::GetDevice(&curr_device));
     auto sp =
         std::shared_ptr<void>(dev, [handle, curr_device, this](void* ptr) {
           cuda::CUDAGuard device_guard(curr_device);
