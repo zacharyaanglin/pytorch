@@ -6,14 +6,18 @@ import dis
 import functools
 import inspect
 import logging
+import math
+import operator
 import os
 import sys
+import sympy
 import textwrap
 import threading
 import traceback
 import types
 import warnings
 import weakref
+from collections import defaultdict
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TYPE_CHECKING, Union
 from unittest.mock import patch
@@ -789,6 +793,75 @@ def export(
                 r.node.meta["val"] = self.current_node.meta["val"]
             return r
 
+    class AddRuntimeAssertsInInputConstraint(torch.fx.interpreter.Transformer):
+        def __init__(
+            self,
+            m,
+        ):
+            super().__init__(m)
+            self.count = 0
+            self.constraints_id_to_constraint = defaultdict(list)
+            if constraints is not None:
+                # map input tensor to it's constraints
+                for constraint in constraints:
+                    self.constraints_id_to_constraint[constraint.t_id].append(constraint)
+
+        def placeholder(self, target, args, kwargs):
+            arg = super().placeholder(target, args, kwargs)
+            orig_inp_id = id(flat_args[self.count])
+
+            if orig_inp_id not in self.constraints_id_to_constraint:
+                self.count += 1
+                return arg
+
+            constraints = self.constraints_id_to_constraint[orig_inp_id]
+
+            # Convert simple sympy Integers into concrete int to
+            # insert into graph
+            def _convert_to_int(val):
+                if val == sympy.oo:
+                    return math.inf
+                if isinstance(val, sympy.Integer):
+                    return int(val)
+                # TODO ignore expressions for now
+                return None
+
+            for constraint in constraints:
+                constraint_range = constraint.constraint_range
+                if constraint_range is None:
+                    continue
+
+                min_int_val = _convert_to_int(constraint_range.vr.lower)
+                max_int_val = _convert_to_int(constraint_range.vr.upper)
+
+                if min_int_val is None and max_int_val is None:
+                    continue
+
+                dim = self.tracer.create_proxy('call_function', torch.ops.aten.sym_size, (arg, constraint.dim), {})
+                assert_msg = f"Input #{self.count}'s dimension #{constraint.dim} size is outside of supported dynamic range"
+
+                if min_int_val:
+                    gt = self.tracer.create_proxy('call_function', operator.gt, (dim, min_int_val), {})
+                    tensor_gt = self.tracer.create_proxy('call_function', torch.scalar_tensor, (gt,), {})
+                    self.tracer.create_proxy('call_function', torch.ops.aten._assert_async.msg, (tensor_gt, assert_msg), {})
+
+                if max_int_val:
+                    lt = self.tracer.create_proxy('call_function', operator.lt, (dim, max_int_val), {})
+                    tensor_lt = self.tracer.create_proxy('call_function', torch.scalar_tensor, (lt,), {})
+                    self.tracer.create_proxy('call_function', torch.ops.aten._assert_async.msg, (tensor_lt, assert_msg), {})
+
+            self.count += 1
+            return arg
+
+        def run_node(self, n):
+            self.current_node = n
+            r = super().run_node(n)
+            if "val" in self.current_node.meta:
+                r.node.meta["val"] = self.current_node.meta["val"]
+            if "tensor_dict" in self.current_node.meta:
+                r.node.meta["tensor_dict"] = self.current_node.meta["tensor_dict"]
+            return r
+
     if aten_graph:
         # Running graph with interpreter is needed for propagating the stack_trace
         def graph_with_interpreter(*args):
@@ -811,6 +884,10 @@ def export(
 
     new_graph = ChangeInputOutputSignature(
         graph,
+    ).transform()
+
+    new_graph = AddRuntimeAssertsInInputConstraint(
+        new_graph,
     ).transform()
 
     def signature_to_fullargspec(sig: inspect.Signature):
