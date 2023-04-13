@@ -406,7 +406,7 @@ static void upsample_bilinear2d_backward_out_cuda_template(
 
       Tensor grad_output = grad_output_.contiguous(at::MemoryFormat::ChannelsLast);
 
-      auto idata = grad_input.data_ptr<scalar_t>();
+      auto idata = grad_input.mutable_data_ptr<scalar_t>();
       auto odata = grad_output.data_ptr<scalar_t>();
 
       const accscalar_t rheight = area_pixel_compute_scale<accscalar_t>(

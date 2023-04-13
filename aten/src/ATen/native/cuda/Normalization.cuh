@@ -1645,7 +1645,7 @@ at::Tensor batch_norm_backward_elemt_channels_last_cuda_template(
           sum_dy.data_ptr<accscalar_t>(),
           sum_dy_xmu.data_ptr<accscalar_t>(),
           count.data_ptr<int>(),
-          grad_input.data_ptr<scalar_t>(),
+          grad_input.mutable_data_ptr<scalar_t>(),
           count.numel(),
           reduction_size,
           stride);
@@ -1668,7 +1668,7 @@ at::Tensor batch_norm_backward_elemt_channels_last_cuda_template(
           sum_dy.data_ptr<accscalar_t>(),
           sum_dy_xmu.data_ptr<accscalar_t>(),
           count.data_ptr<int>(),
-          grad_input.data_ptr<scalar_t>(),
+          grad_input.mutable_data_ptr<scalar_t>(),
           count.numel(),
           reduction_size,
           stride);
@@ -1713,7 +1713,7 @@ at::Tensor batch_norm_backward_elemt_channels_last_cuda_template(
           weight.data_ptr<accscalar_t>(),
           sum_dy.data_ptr<accscalar_t>(),
           sum_dy_xmu.data_ptr<accscalar_t>(),
-          grad_input.data_ptr<scalar_t>(),
+          grad_input.mutable_data_ptr<scalar_t>(),
           static_cast<accscalar_t>(norm_fct),
           reduction_size,
           stride);
@@ -1728,7 +1728,7 @@ at::Tensor batch_norm_backward_elemt_channels_last_cuda_template(
           weight.defined() ? weight.data_ptr<scalar_t>() : nullptr,
           sum_dy.data_ptr<accscalar_t>(),
           sum_dy_xmu.data_ptr<accscalar_t>(),
-          grad_input.data_ptr<scalar_t>(),
+          grad_input.mutable_data_ptr<scalar_t>(),
           static_cast<accscalar_t>(norm_fct),
           reduction_size,
           stride);

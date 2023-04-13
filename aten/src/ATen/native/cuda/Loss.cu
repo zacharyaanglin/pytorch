@@ -533,7 +533,7 @@ void nll_loss_backward_out_cuda_template(
               [&] {
                 nll_loss_backward_reduce_cuda_kernel_1d<scalar_t, index_t>
                     <<<1, 1, 0, at::cuda::getCurrentCUDAStream()>>>(
-                        grad_input.data_ptr<scalar_t>(),
+                        grad_input.mutable_data_ptr<scalar_t>(),
                         grad_output.data_ptr<scalar_t>(),
                         weight.defined() ? weight_.data_ptr<scalar_t>()
                                          : nullptr,
@@ -558,7 +558,7 @@ void nll_loss_backward_out_cuda_template(
               [&] {
             nll_loss_backward_reduce_cuda_kernel_2d<scalar_t, index_t>
                 <<<1, NLL_LOSS_THREADS, 0, at::cuda::getCurrentCUDAStream()>>>(
-                    grad_input.data_ptr<scalar_t>(),
+                    grad_input.mutable_data_ptr<scalar_t>(),
                     grad_output.data_ptr<scalar_t>(),
                     target.data_ptr<index_t>(),
                     weight.defined() ? weight_.data_ptr<scalar_t>() : nullptr,

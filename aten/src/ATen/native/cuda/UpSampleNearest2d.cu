@@ -381,7 +381,7 @@ static void upsample_nearest2d_backward_out_cuda_template(
       using accscalar_t = at::acc_type<scalar_t, true>;
 
       const scalar_t* go = grad_output.data_ptr<scalar_t>();
-      scalar_t* gi = grad_input.data_ptr<scalar_t>();
+      scalar_t* gi = grad_input.mutable_data_ptr<scalar_t>();
 
       upsample_nearest2d_backward_nhwc_out_frame<scalar_t, accscalar_t, nn_bw_compute_source_index_fn>
         <<<ceil_div(num_kernels, num_threads), num_threads, 0, at::cuda::getCurrentCUDAStream()>>>(

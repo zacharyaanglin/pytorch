@@ -342,7 +342,7 @@ void multilabel_margin_loss_backward_cuda_out_template(
           using accscalar_t = at::acc_type<scalar_t, true>;
           multilabel_margin_loss_backward_kernel<scalar_t, accscalar_t>
               <<<blocks, threads, 0, c10::cuda::getCurrentCUDAStream()>>>(
-                  grad_input.data_ptr<scalar_t>(),
+                  grad_input.mutable_data_ptr<scalar_t>(),
                   grad_output_.data_ptr<scalar_t>(),
                   input_.data_ptr<scalar_t>(),
                   target_.data_ptr<int64_t>(),
@@ -373,7 +373,7 @@ void multilabel_margin_loss_backward_cuda_out_template(
           using accscalar_t = at::acc_type<scalar_t, true>;
           multilabel_margin_loss_backward_kernel<scalar_t, accscalar_t>
               <<<blocks, threads, 0, c10::cuda::getCurrentCUDAStream()>>>(
-                  grad_input.data_ptr<scalar_t>(),
+                  grad_input.mutable_data_ptr<scalar_t>(),
                   grad_output_.data_ptr<scalar_t>(),
                   input_.data_ptr<scalar_t>(),
                   target_.data_ptr<int64_t>(),

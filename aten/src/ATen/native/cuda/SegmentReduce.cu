@@ -341,7 +341,7 @@ Tensor _segment_reduce_lengths_offsets_backward_cuda_kernel(
             ([&]() {
               auto* output_data = output_contig.data_ptr<scalar_t>();
               auto* grad_data = grad_contig.data_ptr<scalar_t>();
-              auto* grad_input_data = grad_input.data_ptr<scalar_t>();
+              auto* grad_input_data = grad_input.mutable_data_ptr<scalar_t>();
               const auto* values_data = data_contig.data_ptr<scalar_t>();
 
               scalar_t initial_prod_value;

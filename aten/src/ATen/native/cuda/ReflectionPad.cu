@@ -418,7 +418,7 @@ void reflection_pad2d_backward_out_template(
 
           reflection_pad2d_backward_out_kernel<<<
             grid_size, block_size, 0, at::cuda::getCurrentCUDAStream()>>>(
-              grad_input.data_ptr<scalar_t>(), grad_output.data_ptr<scalar_t>(),
+              grad_input.mutable_data_ptr<scalar_t>(), grad_output.data_ptr<scalar_t>(),
               input_w, input_h,
               pad_t, pad_b, pad_l, pad_r, block_y, block_z, nplane);
           C10_CUDA_KERNEL_LAUNCH_CHECK();
@@ -523,7 +523,7 @@ TORCH_IMPL_FUNC(reflection_pad1d_backward_out_cuda)(const Tensor& grad_output_,
     grad_input.scalar_type(), "reflection_pad1d_backward_out_cuda", [&] {
       reflection_pad1d_backward_out_kernel<<<
         grid_size, block_size, 0, at::cuda::getCurrentCUDAStream()>>>(
-          grad_input.data_ptr<scalar_t>(), grad_output.data_ptr<scalar_t>(),
+          grad_input.mutable_data_ptr<scalar_t>(), grad_output.data_ptr<scalar_t>(),
           input_w, pad_l, pad_r);
       C10_CUDA_KERNEL_LAUNCH_CHECK();
     }
