@@ -2038,6 +2038,10 @@ class ShapeEnv:
             new_shape_env[k] = s + offset
             new_range_env[s] = ValueRangeAnalysis.sub(vr, offset)
 
+        try:
+            sympy.simplify(expr.xreplace(new_shape_env))
+        except Exception:
+            return None
         new_expr = expr.xreplace(new_shape_env)
         floor_div_replace = {}
         for atom in new_expr.atoms(FloorDiv):
