@@ -314,7 +314,7 @@ Tensor& multi_margin_loss_cuda_backward_out(
 
       if (p == 1) {
         MultiMarginLoss_backward_kernel<1> <<<blocks, threads, 0, stream>>>(
-            grad_input.data_ptr<scalar_t>(),
+            grad_input.mutable_data_ptr<scalar_t>(),
             grad_output.data_ptr<scalar_t>(),
             input.data_ptr<scalar_t>(),
             target.data_ptr<int64_t>(),
@@ -327,7 +327,7 @@ Tensor& multi_margin_loss_cuda_backward_out(
         C10_CUDA_KERNEL_LAUNCH_CHECK();
       } else if (p == 2) {
         MultiMarginLoss_backward_kernel<2> <<<blocks, threads, 0, stream>>>(
-            grad_input.data_ptr<scalar_t>(),
+            grad_input.mutable_data_ptr<scalar_t>(),
             grad_output.data_ptr<scalar_t>(),
             input.data_ptr<scalar_t>(),
             target.data_ptr<int64_t>(),
@@ -349,7 +349,7 @@ Tensor& multi_margin_loss_cuda_backward_out(
 
       if (p == 1) {
         MultiMarginLoss_backward_kernel<1> <<<blocks, threads, 0, stream>>>(
-            grad_input.data_ptr<scalar_t>(),
+            grad_input.mutable_data_ptr<scalar_t>(),
             grad_output.data_ptr<scalar_t>(),
             input.data_ptr<scalar_t>(),
             target.data_ptr<int64_t>(),
@@ -361,7 +361,7 @@ Tensor& multi_margin_loss_cuda_backward_out(
         C10_CUDA_KERNEL_LAUNCH_CHECK();
       } else if (p == 2) {
         MultiMarginLoss_backward_kernel<2> <<<blocks, threads, 0, stream>>>(
-            grad_input.data_ptr<scalar_t>(),
+            grad_input.mutable_data_ptr<scalar_t>(),
             grad_output.data_ptr<scalar_t>(),
             input.data_ptr<scalar_t>(),
             target.data_ptr<int64_t>(),

@@ -481,7 +481,7 @@ at::Tensor& max_unpooling2d_backward_out_cuda(const Tensor& grad_output_,
             nInputCols,
             oheight,
             owidth,
-            grad_input.data_ptr<scalar_t>());
+            grad_input.mutable_data_ptr<scalar_t>());
         C10_CUDA_KERNEL_LAUNCH_CHECK();
       }));
   return grad_input;

@@ -441,7 +441,7 @@ void nll_loss2d_backward_out_cuda_template(
                 CUDA_NUM_THREADS,
                 0,
                 at::cuda::getCurrentCUDAStream()>>>(
-                  grad_input.data_ptr<scalar_t>(),
+                  grad_input.mutable_data_ptr<scalar_t>(),
                   grad_output.data_ptr<scalar_t>(),
                   target_.data_ptr<int64_t>(),
                   optional_data<scalar_t>(weight_),

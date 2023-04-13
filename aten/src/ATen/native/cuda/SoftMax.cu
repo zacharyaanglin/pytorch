@@ -1100,7 +1100,7 @@ Tensor masked_softmax_backward_cuda(
       [&] {
         using accscalar_t = acc_type<scalar_t, true>;
         dispatch_softmax_backward<scalar_t, scalar_t, accscalar_t, false, true /* masked_softmax */>(
-          grad_input.data_ptr<scalar_t>(),  // gI_ptr
+          grad_input.mutable_data_ptr<scalar_t>(),  // gI_ptr
           grad.data_ptr<scalar_t>(),  // grad_ptr
           output.data_ptr<scalar_t>(),  // output_ptr
           softmax_elements,  // softmax_elements
