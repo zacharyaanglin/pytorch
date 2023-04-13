@@ -18,7 +18,12 @@ from . import config, exc
 from .allowed_functions import is_allowed
 from .backends.registry import CompilerFn
 from .bytecode_analysis import remove_dead_code, remove_pointless_jumps
-from .bytecode_transformation import is_generator, transform_code_object
+from .bytecode_transformation import (
+    check_exn_tab_entries,
+    is_generator,
+    propagate_exn_table_entries,
+    transform_code_object,
+)
 from .eval_frame import always_optimize_code_objects, skip_code, TorchPatcher
 from .exc import (
     augment_exc_message,
@@ -378,6 +383,8 @@ def _compile(
         code_options.update(output.code_options)
 
         if config.dead_code_elimination:
+            check_exn_tab_entries(instructions)
+            propagate_exn_table_entries(instructions)
             instructions[:] = remove_pointless_jumps(remove_dead_code(instructions))
 
     try:
