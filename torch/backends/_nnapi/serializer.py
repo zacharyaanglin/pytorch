@@ -1549,19 +1549,17 @@ class _NnapiSerializer:
         self.add_operation(NNAPI_OperationCode.AVERAGE_POOL_2D, inputs, outputs)
 
     def add_upsample_nearest2d(self, node):
-        assert node.inputsSize() == 3 or node.inputsSize() == 4
+        assert node.inputsSize() == 4
         assert node.outputsSize() == 1
-        if node.inputsSize() == 3:
-            image, size_jit, scale_jit = node.inputs()
-        else:
-            image, size_jit, scale_h_jit, scale_w_jit = node.inputs()
-        size_ctype, size_arg = self.get_constant_value(size_jit)
 
-        if node.inputsSize() == 3:
-            scale_ctype, scale_arg = self.get_constant_value(scale_jit)
+        image, size_jit, arg2_jit, arg3_jit = node.inputs()
+
+        arg3_ctype, arg3_arg = self.get_constant_value(arg3_jit)
+        if arg3_ctype.kind() == "BoolType":
+            scale_ctype, scale_arg = self.get_constant_value(arg2_jit)
         else:
-            scale_h_ctype, scale_h_arg = self.get_constant_value(scale_h_jit)
-            scale_w_ctype, scale_w_arg = self.get_constant_value(scale_w_jit)
+            scale_h_ctype, scale_h_arg = self.get_constant_value(arg2_jit)
+            scale_w_ctype, scale_w_arg = self.get_constant_value(arg3_jit)
 
             # The only way for the 4-argument overload of upsample_nearest2d to
             # have been added to the graph without error is if the scale_h and
@@ -1571,6 +1569,8 @@ class _NnapiSerializer:
 
             scale_ctype = scale_h_ctype
             scale_arg = scale_h_arg
+
+        size_ctype, size_arg = self.get_constant_value(size_jit)
 
         image_id, image_oper = self.get_tensor_operand_by_jitval(image)
         assert len(image_oper.shape) == 4
