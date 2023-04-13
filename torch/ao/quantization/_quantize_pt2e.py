@@ -52,6 +52,7 @@ def prepare_pt2e(
 def prepare_pt2e_quantizer(
     model: GraphModule,
     quantizer: Quantizer,
+    is_qat: bool = False,
 ):
     # TODO: move this information to fx node itself
     node_name_to_scope: Dict[str, Tuple[str, type]] = {}
@@ -70,7 +71,7 @@ def prepare_pt2e_quantizer(
     model = prepare(
         model,
         quantizer,
-        False,  # is_qat
+        is_qat,
         node_name_to_scope,
     )
 
@@ -78,6 +79,13 @@ def prepare_pt2e_quantizer(
     # move around the observer for addmm
     _rearrange_weight_observer_for_decomposed_linear(model)
     return model
+
+# TODO: update this to prepare_qat_pt2e
+def prepare_qat_pt2e_quantizer(
+    model: GraphModule,
+    quantizer: Quantizer,
+):
+    return prepare_pt2e_quantizer(model, quantizer, is_qat=True)
 
 def convert_pt2e(
     model: GraphModule

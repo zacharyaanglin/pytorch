@@ -27,7 +27,12 @@ from torch.ao.quantization.backend_config.x86 import get_x86_backend_config
 from torch.ao.quantization.quantize_fx import prepare_fx, convert_to_reference_fx, convert_fx
 from torch.ao.quantization._pt2e.quantizer import Quantizer
 from torch.ao.quantization._pt2e.quantizer import QNNPackQuantizer
-from torch.ao.quantization._quantize_pt2e import prepare_pt2e, convert_pt2e, prepare_pt2e_quantizer
+from torch.ao.quantization._quantize_pt2e import (
+    prepare_pt2e,
+    convert_pt2e,
+    prepare_pt2e_quantizer,
+    prepare_qat_pt2e_quantizer,
+)
 from torch.ao.ns.fx.utils import (
     compute_sqnr,
 )
@@ -297,6 +302,40 @@ class TestQuantizePT2E(QuantizationTestCase):
         self.checkGraphModuleNodes(
             m, expected_node_list=node_list, expected_node_occurrence=node_occurrence)
 
+    def test_qat_conv_bn_fusion(self):
+        class M(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.conv = torch.nn.Conv2d(1, 1, 1)
+                self.bn = torch.nn.BatchNorm2d(1)
+
+            def forward(self, x):
+                x = self.conv(x)
+                x = self.bn(x)
+                return x
+
+        import torch.ao.quantization._pt2e.quantizer.qnnpack_quantizer as qq
+        quantizer = QNNPackQuantizer()
+        quantizer.set_global(qq.get_default_per_channel_symmetric_qnnpack_operator_spec())
+        m = M()
+        example_inputs = (torch.randn(1, 1, 3, 3),)
+
+        # program capture
+        m, guards = torchdynamo.export(
+            m,
+            *copy.deepcopy(example_inputs),
+            aten_graph=True,
+            tracing_mode="real",
+        )
+
+        # Note: this currently fails due to a torchdynamo bug where exporting the fused
+        # QAT conv + bn pattern leads to an internal assertion failure. For more detail,
+        # see https://github.com/pytorch/pytorch/issues/98531.
+        m = prepare_qat_pt2e_quantizer(m, quantizer)
+        #m(*example_inputs)
+
+        # TODO: check that subgraph was replaced
+
     def test_rearrange_weight_observer_for_decomposed_linear(self):
         """
         Check whether weight observer is correctly rearranged for decomposed linear.
@@ -533,7 +572,6 @@ class TestQuantizePT2EModels(QuantizationTestCase):
             # of quant/dequant
             self.assertTrue(torch.max(after_quant_result - after_quant_result_fx) < 1e-1)
             self.assertTrue(compute_sqnr(after_quant_result, after_quant_result_fx) > 35)
-
 
     @skip_if_no_torchvision
     @skipIfNoQNNPACK
