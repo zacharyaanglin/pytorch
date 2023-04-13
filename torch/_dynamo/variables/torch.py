@@ -16,7 +16,7 @@ from torch._guards import GuardsCheckpointState
 from .. import variables
 from ..allowed_functions import torch_get_name
 from ..config_utils import config
-from ..exc import unimplemented
+from ..exc import unimplemented, Unsupported, UserError, UserErrorType
 from ..source import GeneratorStateSource, GetItemSource, NNModuleSource
 from ..utils import (
     check_constant_args,
@@ -855,12 +855,20 @@ class TorchHigherOrderOperator(VariableTracker):
                 # NB: we don't bother populating graphargs, as
                 # they won't actually get used by anything
 
-            output = f.call_function(tx, args, {})
+            try:
+                output = f.call_function(tx, args, {})
+            except Exception:
+                raise
 
             # Register output to graph
             # Modeled off of compile_and_call_fx_graph
             # TODO: support non single Tensor output
-            assert isinstance(output, TensorVariable)
+            if not isinstance(output, TensorVariable):
+                raise TypeError(
+                    "Expect branch out type to be a single tensor but got {}".format(
+                        str(output.python_type())
+                    ),
+                )
             tx.output.guards.update(output.guards)
             tx.output.create_node(
                 "output", "output", (tx.output.create_arg((output.as_proxy(),))), {}
@@ -888,14 +896,45 @@ class TorchHigherOrderOperator(VariableTracker):
         if self.value.__name__ == "cond":
             # TODO(voz): Support fake tensor dispatch for recursive
             # ops - see torch/dispatch/_dispatcher.py
-            assert len(args) == 4
-            assert type(args[0]) in (
-                TensorVariable,
-                SymNodeVariable,
-                ConstantVariable,
-            ), str(
-                type(args[0])
-            )  # predicate
+            if len(args) != 4:
+                raise UserError(
+                    UserErrorType.COND_OP_RESTRICTION,
+                    f"Expected 4 arguments but got {len(args)}.\n"
+                    f"Usage: cond(pred, true_fn, false_fn, operands)",
+                )
+            # predicate
+            if type(args[0]) not in (TensorVariable, SymNodeVariable, ConstantVariable):
+                raise UserError(
+                    UserErrorType.COND_OP_RESTRICTION,
+                    f"Expect pred to be traced as TensorVariable, "
+                    f"SymNodeVariable or ConstantVariable but got {str(type(args[0]))} "
+                    f"with original python type {str(args[0].python_type())}.",
+                )
+
+            # operands
+            if type(args[3]) is not ListVariable:
+                raise UserError(
+                    UserErrorType.COND_OP_RESTRICTION,
+                    f"Expect operands to be a list but got {args[3].python_type()}",
+                )
+            operands = args[3].unpack_var_sequence(tx)
+            if not all(
+                isinstance(operand, (TensorVariable, torch.Tensor))
+                for operand in operands
+            ):
+                raise UserError(
+                    UserErrorType.COND_OP_RESTRICTION,
+                    "Expect operands to be a list of tensors but got {actual_args}".format(
+                        actual_args=[
+                            str(operand.python_type())
+                            if isinstance(operand, VariableTracker)
+                            else str(type(operand))
+                            for operand in operands
+                        ],
+                    ),
+                )
+
+            # branches
             assert isinstance(
                 args[1], (UserFunctionVariable, NestedUserFunctionVariable)
             ), str(
@@ -906,7 +945,6 @@ class TorchHigherOrderOperator(VariableTracker):
             ), str(
                 type(args[2])
             )  # false_fn
-            assert type(args[3]) is ListVariable, str(type(args[3]))  # args
 
             # Our strategy for tracing the true/false branches of cond
             # are to checkpoint our graphstate, run the true branch,
@@ -923,14 +961,15 @@ class TorchHigherOrderOperator(VariableTracker):
 
             graph_checkpoint, checkpoint = tx.output.graph, tx.copy_graphstate()
 
-            sub_args = args[3].unpack_var_sequence(tx)
-
             def speculate_branch(branch):
-                # NB: 0 is predicate
-                ix = 1 if branch else 2
-                return speculate_subgraph(
-                    args[ix], sub_args, graph_checkpoint, checkpoint
-                )
+                try:
+                    # NB: 0 is predicate
+                    ix = 1 if branch else 2
+                    return speculate_subgraph(
+                        args[ix], operands, graph_checkpoint, checkpoint
+                    )
+                except (Unsupported, TypeError) as e:
+                    raise UserError(UserErrorType.COND_OP_RESTRICTION, str(e))
 
             (
                 true_r,
@@ -972,7 +1011,7 @@ class TorchHigherOrderOperator(VariableTracker):
                 args[0].as_proxy(),
                 true_node,
                 false_node,
-                [a.as_proxy() for a in sub_args],
+                [a.as_proxy() for a in operands],
             )
             # TODO: assert that the true/false return values are
             # consistent
